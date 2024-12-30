@@ -5,7 +5,7 @@ Implementation of "OmicsTweezer: a data distribution-independent cell deconvolut
 
 ### 1. Create a new conda environmenty.
 
-'''
+'
 conda create -n OmicsTweezer python=3.12
 conda activate OmicsTweezer
-'''
+'
