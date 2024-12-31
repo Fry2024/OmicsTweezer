@@ -1,5 +1,5 @@
 # OmicsTweezer
-Implementation of "OmicsTweezer: a data distribution-independent cell deconvolution model for multi-omics data"
+Implementation of "OmicsTweezer: a data distribution-independent cell deconvolution model for multi-omics data" (under peer review) 
 
 ## Installation/Requirements
 
