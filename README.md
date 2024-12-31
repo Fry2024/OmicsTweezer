@@ -47,6 +47,10 @@ predict = train_predict.train_predict(sc_reference, target_bulk,num=3000, scale=
 
 
 ## Example
+```
+# Unzip "Batch_effect_simulation_dataset.zip" in the Data folder 
+```
+
 ```python
 import scanpy as sc
 sc_reference = sc.read("Data/Batch_effect_simulation_dataset/sc_reference.h5ad")
