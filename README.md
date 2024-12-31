@@ -19,7 +19,7 @@ pip install -r requirements.txt
 ## How to run the code
 ```bash
 conda activate OmicsTweezer
-git clone gihub
+git clone https://github.com/Fry2024/OmicsTweezer.git
 ```
 ```python
 ## load single cell reference and bulk/spatial/proteomics data
