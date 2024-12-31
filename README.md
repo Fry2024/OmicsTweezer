@@ -67,6 +67,7 @@ AnnData object with n_obs × n_vars = 100 × 1969
 from OmicsTweezer import train_predict
 predict = train_predict.train_predict(sc_reference, target_bulk,num=3000, scale=True, ot_weight=1)
 ```
+
 ```
 predict.head(5)
 ```
@@ -79,4 +80,3 @@ predict.head(5)
 4	0.097646	0.137434	0.532700	0.139232	0.092987
 
 
-```
