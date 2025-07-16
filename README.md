@@ -1,6 +1,6 @@
 # OmicsTweezer
 Implementation of "OmicsTweezer: a data distribution-independent cell deconvolution model for multi-omics data" (Cell Genomics) 
-![model](Graphical Abstract.pdf)
+![model](./Graphical Abstract.pdf)
 ## Installation/Requirements
 
 ### 1. Create a new conda environmenty.
