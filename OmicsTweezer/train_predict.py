@@ -14,7 +14,7 @@ def train_predict(train_reference, test_bulk, num, scale, ot_weight):
 
 
     test_bulk_copy = test_bulk.copy()
-    test_bulk_copy.obs = test_bulk_copy.obs.iloc[0:test_bulk_copy.shape[0],:]
+    test_bulk_copy.obs = train_bulk.obs.iloc[0:test_bulk_copy.shape[0],:]
     
     ## train and predict
     predict_output, ground_truth = deconvolution.mian(train_bulk, test_bulk_copy,  ot_weight,sep='\t',
