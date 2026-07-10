@@ -1,6 +1,5 @@
 import os
 import anndata
-import numpy as np
 import pandas as pd
 import seaborn as sns
 import matplotlib.pyplot as plt
@@ -10,16 +9,21 @@ import random
 import torch
 
 
-# 固定随机种子
 def set_seed(seed=42):
+    """Set reproducible seeds for CPU and CUDA."""
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
-    torch.cuda.manual_seed(seed)
-    torch.cuda.manual_seed_all(seed)
-    torch.backends.cudnn.deterministic = True
-    torch.backends.cudnn.benchmark = False
-    print("seed is fixed, seed is {}".format(seed))
+
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed(seed)
+        torch.cuda.manual_seed_all(seed)
+        torch.backends.cudnn.deterministic = True
+        torch.backends.cudnn.benchmark = False
+
+    print(f"Seed is fixed, seed is {seed}")
+
+
 set_seed()
 
 #### NEEDED FILES
@@ -93,10 +97,18 @@ def ProcessInputData(train_data, test_data, sep=None, datatype='counts', varianc
         print('Using counts data to train model')
     ### variance cutoff
     print('Cutting variance...')
-    var_cutoff = train_x.var(axis=0).sort_values(ascending=False)[int(train_x.shape[1] * variance_threshold)]
+    var_cutoff = (
+        train_x.var(axis=0)
+        .sort_values(ascending=False)
+        .iloc[int(train_x.shape[1] * variance_threshold)]
+    )
     train_x = train_x.loc[:, train_x.var(axis=0) > var_cutoff]
 
-    var_cutoff = test_x.var(axis=0).sort_values(ascending=False)[int(test_x.shape[1] * variance_threshold)]
+    var_cutoff = (
+        test_x.var(axis=0)
+        .sort_values(ascending=False)
+        .iloc[int(test_x.shape[1] * variance_threshold)]
+    )
     test_x = test_x.loc[:, test_x.var(axis=0) > var_cutoff]
 
     ### find intersected genes

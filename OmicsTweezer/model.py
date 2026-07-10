@@ -15,17 +15,60 @@ import random
 import torch
 
 
-# 固定随机种子
+def resolve_device(device=None):
+    """
+    Select the computation device.
+
+    device=None:
+        Use CUDA when available, otherwise CPU.
+
+    device="cpu":
+        Force CPU.
+
+    device="cuda" or "cuda:0":
+        Request CUDA. Falls back to CPU when CUDA is unavailable.
+    """
+    if device is None:
+        return torch.device(
+            "cuda" if torch.cuda.is_available() else "cpu"
+        )
+
+    requested_device = torch.device(device)
+
+    if requested_device.type == "cuda":
+        if not torch.cuda.is_available():
+            warnings.warn(
+                "CUDA was requested but is unavailable. Falling back to CPU.",
+                RuntimeWarning,
+            )
+            return torch.device("cpu")
+
+        if requested_device.index is not None:
+            if requested_device.index >= torch.cuda.device_count():
+                warnings.warn(
+                    f"CUDA device {requested_device.index} does not exist. "
+                    "Falling back to cuda:0.",
+                    RuntimeWarning,
+                )
+                return torch.device("cuda:0")
+
+    return requested_device
+
+
 def set_seed(seed=42):
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
-    torch.cuda.manual_seed(seed)
-    torch.cuda.manual_seed_all(seed)
-    torch.backends.cudnn.deterministic = True
-    torch.backends.cudnn.benchmark = False
-    print("seed is fixed, seed is {}".format(seed))
-set_seed()
+
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed(seed)
+        torch.cuda.manual_seed_all(seed)
+
+        torch.backends.cudnn.deterministic = True
+        torch.backends.cudnn.benchmark = False
+
+    print(f"Seed is fixed, seed is {seed}")
+
 
 def L1_loss(preds, gt):
     loss = torch.mean(torch.reshape(torch.square(preds - gt), (-1,)))
@@ -53,22 +96,30 @@ class DecoderBlock(nn.Module):
 
         
 class OmicsTweezer(object):
-    def __init__(self, architectures, epochs, batch_size, target_type, learning_rate):
+    def __init__(self, architectures, epochs, batch_size, target_type, learning_rate,device=None,):
         self.num_epochs = epochs
         self.batch_size = batch_size
         self.target_type = target_type
         self.learning_rate = learning_rate
+
         self.celltype_num = None
         self.labels = None
         self.used_features = None
+
         self.seed = 2021
-        self.outdir = './result_data/'
+        self.outdir = "./result_data/"
+
         self.architectures_dim = architectures[0]
         self.architectures_drop = architectures[1]
-        cudnn.deterministic = True
-        torch.cuda.manual_seed_all(self.seed)
-        torch.manual_seed(self.seed)
-        random.seed(self.seed)
+
+        self.device = resolve_device(device)
+
+        set_seed(self.seed)
+
+        print(f"Using device: {self.device}")
+
+        if self.device.type == "cuda":
+            print(f"CUDA device: {torch.cuda.get_device_name(self.device)}")
 
     def OmicsTweezer_model(self, celltype_num):
         feature_num = len(self.used_features)
@@ -127,73 +178,148 @@ class OmicsTweezer(object):
         self.test_target_loader = Data.DataLoader(dataset=target_dataset, batch_size=batch_size, shuffle=False)
 
     def train(self, source_data, target_data, loss_weight):
+        # Prepare data loaders.
+        self.prepare_dataloader(
+            source_data,
+            target_data,
+            self.batch_size,
+        )
 
-        ### prepare model structure ###
-        self.prepare_dataloader(source_data, target_data, self.batch_size)
-        self.model_da = self.OmicsTweezer_model(self.celltype_num).cuda()
-        self.loss_weight= loss_weight
-        ### setup optimizer ###
+        # Build model and move all contained modules to the selected device.
+        self.model_da = self.OmicsTweezer_model(
+            self.celltype_num
+        ).to(self.device)
 
+        self.loss_weight = loss_weight
 
-        optimizer_da1 = torch.optim.Adam([{'params': self.encoder_da.parameters()},
-                                  {'params': self.predictor_da.parameters()}], lr=self.learning_rate)
+        optimizer_da1 = torch.optim.Adam(
+            [
+                {"params": self.encoder_da.parameters()},
+                {"params": self.predictor_da.parameters()},
+            ],
+            lr=self.learning_rate,
+        )
 
-        
-        metric_logger = defaultdict(list) 
+        metric_logger = defaultdict(list)
+
+        non_blocking = self.device.type == "cuda"
 
         for epoch in range(self.num_epochs):
             self.model_da.train()
 
             train_target_iterator = iter(self.train_target_loader)
-            pred_loss_epoch, disc_loss_epoch = 0., 0.
-            for batch_idx, (source_x, source_y) in enumerate(self.train_source_loader):
-                # get batch item of target
+            pred_loss_epoch = 0.0
+
+            for batch_idx, (source_x, source_y) in enumerate(
+                self.train_source_loader
+            ):
                 try:
                     target_x, _ = next(train_target_iterator)
                 except StopIteration:
                     train_target_iterator = iter(self.train_target_loader)
                     target_x, _ = next(train_target_iterator)
 
-                embedding_source = self.encoder_da(source_x.cuda())
-                embedding_target = self.encoder_da(target_x.cuda())
+                # Move all tensors to the same device as the model.
+                source_x = source_x.to(
+                    self.device,
+                    dtype=torch.float32,
+                    non_blocking=non_blocking,
+                )
+
+                source_y = source_y.to(
+                    self.device,
+                    dtype=torch.float32,
+                    non_blocking=non_blocking,
+                )
+
+                target_x = target_x.to(
+                    self.device,
+                    dtype=torch.float32,
+                    non_blocking=non_blocking,
+                )
+
+                embedding_source = self.encoder_da(source_x)
+                embedding_target = self.encoder_da(target_x)
+
                 frac_pred = self.predictor_da(embedding_source)
 
+                pred_loss = L1_loss(frac_pred, source_y)
+                pred_loss_epoch += pred_loss.item()
 
-                # caculate loss 
-                pred_loss = L1_loss(frac_pred, source_y.cuda())       
-                pred_loss_epoch += pred_loss.data.item()
+                w_distance = (
+                    embedding_source.mean()
+                    - embedding_target.mean()
+                )
 
-                w_distance = embedding_source.mean() - embedding_target.mean()
-                loss = pred_loss + self.loss_weight*abs(w_distance) 
+                loss = (
+                    pred_loss
+                    + self.loss_weight * torch.abs(w_distance)
+                )
 
-                # update weights
                 optimizer_da1.zero_grad()
-                loss.backward(retain_graph=True)
+                loss.backward()
                 optimizer_da1.step()
 
+            pred_loss_epoch /= batch_idx + 1
+            metric_logger["pred_loss"].append(pred_loss_epoch)
 
+            print(
+                "============= "
+                f"Epoch {epoch + 1:02d}/{self.num_epochs:02d} "
+                "in training ============="
+            )
+            print(f"pred_loss={pred_loss_epoch:f}")
 
-
-            pred_loss_epoch = pred_loss_epoch/(batch_idx + 1)
-            metric_logger['pred_loss'].append(pred_loss_epoch)
-
-        
-            if (epoch+1) % 1 == 0:
-                print('============= Epoch {:02d}/{:02d} in training ============='.format(epoch + 1, self.num_epochs))
-                print("pred_loss=%f" % (pred_loss_epoch))
+        return metric_logger
 
 
             
     def prediction(self):
         self.model_da.eval()
-        preds, gt = None, None
-        for batch_idx, (x, y) in enumerate(self.test_target_loader):
-            logits = self.predictor_da(self.encoder_da(x.cuda())).detach().cpu().numpy()
-            frac = y.detach().cpu().numpy()
-            preds = logits if preds is None else np.concatenate((preds, logits), axis=0)
-            gt = frac if gt is None else np.concatenate((gt, frac), axis=0)
 
-        target_preds = pd.DataFrame(preds, columns=self.labels)
-        ground_truth = pd.DataFrame(gt, columns=self.labels)
+        preds = None
+        gt = None
+
+        non_blocking = self.device.type == "cuda"
+
+        with torch.no_grad():
+            for batch_idx, (x, y) in enumerate(
+                self.test_target_loader
+            ):
+                x = x.to(
+                    self.device,
+                    dtype=torch.float32,
+                    non_blocking=non_blocking,
+                )
+
+                logits = self.predictor_da(
+                    self.encoder_da(x)
+                )
+
+                logits = logits.cpu().numpy()
+                frac = y.numpy()
+
+                preds = (
+                    logits
+                    if preds is None
+                    else np.concatenate((preds, logits), axis=0)
+                )
+
+                gt = (
+                    frac
+                    if gt is None
+                    else np.concatenate((gt, frac), axis=0)
+                )
+
+        target_preds = pd.DataFrame(
+            preds,
+            columns=self.labels,
+        )
+
+        ground_truth = pd.DataFrame(
+            gt,
+            columns=self.labels,
+        )
+
         return target_preds, ground_truth
-    
+        

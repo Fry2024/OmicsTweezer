@@ -4,79 +4,218 @@ import numpy as np
 import random
 import torch
 
-
-# 固定随机种子
-def set_seed(seed=42):
-    random.seed(seed)
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-    torch.cuda.manual_seed(seed)
-    torch.cuda.manual_seed_all(seed)
-    torch.backends.cudnn.deterministic = True
-    torch.backends.cudnn.benchmark = False
-    print("seed is fixed, seed is {}".format(seed))
-set_seed()
-    
-
 from .utils import ProcessInputData
 from OmicsTweezer import model
 
-def mian(necessary_data, real_bulk ,ot_weight=1,sep='\t', sparse=True,
-                        batch_size=128, epochs=128):
-    print("begin")
-    if type(necessary_data) is str:
-        postfix = necessary_data.split('.')[-1]
-        if postfix == 'txt':
-            simudata = generate_simulated_data(sc_data=necessary_data, samplenum=5000, sparse=sparse)
 
-        elif postfix == 'h5ad':
+def set_seed(seed=42):
+    """Set reproducible random seeds for CPU and CUDA."""
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed(seed)
+        torch.cuda.manual_seed_all(seed)
+        torch.backends.cudnn.deterministic = True
+        torch.backends.cudnn.benchmark = False
+
+    print(f"Seed is fixed, seed is {seed}")
+
+
+set_seed()
+
+
+def mian(
+    necessary_data,
+    real_bulk,
+    ot_weight=1,
+    sep="\t",
+    sparse=True,
+    batch_size=128,
+    epochs=128,
+    device=None,
+):
+    """
+    Train OmicsTweezer and predict cell-type proportions.
+
+    Parameters
+    ----------
+    necessary_data
+        Simulated pseudobulk AnnData object or input path.
+    real_bulk
+        Target bulk AnnData object.
+    ot_weight
+        Weight for the domain adaptation loss.
+    batch_size
+        Training batch size.
+    epochs
+        Number of training epochs.
+    device
+        None automatically selects CUDA when available, otherwise CPU.
+        Use "cpu", "cuda", or "cuda:0" to select explicitly.
+    """
+    print("begin")
+
+    if isinstance(necessary_data, str):
+        postfix = necessary_data.rsplit(".", 1)[-1].lower()
+
+        if postfix == "txt":
+            simudata = generate_simulated_data(
+                sc_data=necessary_data,
+                samplenum=5000,
+                sparse=sparse,
+            )
+
+        elif postfix == "h5ad":
             simudata = anndata.read_h5ad(necessary_data)
 
-        elif postfix == 'pth':
-            raise Exception('Do not accept a model as input')
+        elif postfix == "pth":
+            raise ValueError("Do not accept a model as input.")
+
         else:
-            raise Exception('Please give the correct input')
+            raise ValueError(
+                "Unsupported input file. Expected .txt or .h5ad."
+            )
+
+    elif isinstance(necessary_data, pd.DataFrame):
+        simudata = necessary_data
+        print("DataFrame")
+
+    elif isinstance(necessary_data, anndata.AnnData):
+        simudata = necessary_data
+        print("AnnData")
+
     else:
-        if type(necessary_data) is pd.DataFrame:
-            #simudata = generate_simulated_data(sc_data=necessary_data, samplenum=5000, sparse=sparse)
-            simudata = necessary_data
-            print("Dataframe")
-        elif type(necessary_data) is anndata.AnnData:
-            #simudata = generate_simulated_data(sc_data=necessary_data, samplenum=5000, sparse=sparse)
-            simudata = necessary_data
-            print("Anndata")
-        elif type(necessary_data) is AutoEncoder:
-            raise Exception('Do not accept a model as input')
-        else:
-            raise Exception('Please give the correct input')
+        raise TypeError(
+            "`necessary_data` must be an AnnData object, "
+            "pandas DataFrame, or supported file path."
+        )
 
-    train_x, train_y, test_x, genename, celltypes, samplename = \
-        ProcessInputData(simudata, pd.DataFrame(real_bulk.X, columns=real_bulk.var.index), sep=sep, datatype='counts')
-    print('training data shape is ', train_x.shape, '\ntest data shape is ', test_x.shape)
-    pred, groudT = test(train_x,train_y,test_x,real_bulk.obs,ot_weight, batch_size=batch_size,epochs=epochs)
-    
-    return pred, groudT
+    if not isinstance(real_bulk, anndata.AnnData):
+        raise TypeError("`real_bulk` must be an AnnData object.")
 
-def test(train_x,train_y,test_x,test_y, ot_weight,batch_size=128,epochs=128):
-    architectures = {'m256': ([256,128,64,32],[0,0,0,0]),
-                     'm512': ([512,256,128,64],[0, 0.3, 0.2, 0.1]),
-                     'm1024': ([1024, 512, 256, 128],[0, 0.6, 0.3, 0.1])}
-    final_p, final_g = [], []
+    # AnnData.to_df() safely handles dense and sparse expression matrices.
+    real_bulk_df = real_bulk.to_df()
+
+    (
+        train_x,
+        train_y,
+        test_x,
+        genename,
+        celltypes,
+        samplename,
+    ) = ProcessInputData(
+        simudata,
+        real_bulk_df,
+        sep=sep,
+        datatype="counts",
+    )
+
+    print(
+        "training data shape is ",
+        train_x.shape,
+        "\ntest data shape is ",
+        test_x.shape,
+    )
+
+    pred, ground_truth = test(
+        train_x=train_x,
+        train_y=train_y,
+        test_x=test_x,
+        test_y=real_bulk.obs,
+        ot_weight=ot_weight,
+        batch_size=batch_size,
+        epochs=epochs,
+        device=device,
+    )
+
+    return pred, ground_truth
+
+
+def test(
+    train_x,
+    train_y,
+    test_x,
+    test_y,
+    ot_weight,
+    batch_size=128,
+    epochs=128,
+    device=None,
+):
+    architectures = {
+        "m256": (
+            [256, 128, 64, 32],
+            [0, 0, 0, 0],
+        ),
+        "m512": (
+            [512, 256, 128, 64],
+            [0, 0.3, 0.2, 0.1],
+        ),
+        "m1024": (
+            [1024, 512, 256, 128],
+            [0, 0.6, 0.3, 0.1],
+        ),
+    }
+
+    if not isinstance(test_y, pd.DataFrame):
+        test_y = pd.DataFrame(test_y)
+
+    cell_types = np.asarray(test_y.columns, dtype=str)
+
+    if train_y.shape[1] != len(cell_types):
+        raise ValueError(
+            f"Training labels contain {train_y.shape[1]} cell types, "
+            f"but target metadata contain {len(cell_types)} columns."
+        )
+
+    # Construct this only once instead of recreating it inside each model loop.
+    train_y_df = pd.DataFrame(
+        train_y,
+        columns=cell_types,
+    )
+
+    final_predictions = []
+    final_ground_truth = []
+
     for key in ["m256", "m512", "m1024"]:
-        model_da = model.OmicsTweezer(architectures[key], epochs, batch_size, "simulated", 0.0001)
-        train_y = pd.DataFrame(train_y, columns=np.array(test_y.columns))
-        
-        train, test = anndata.AnnData(train_x, obs=train_y), anndata.AnnData(test_x, obs=test_y)
-        train.uns = {'cell_types': np.array(test.obs.columns)}
-        test.uns = {'cell_types': np.array(test.obs.columns)}
-        print(train,test,ot_weight)
-        model_da.train(train, test,ot_weight)
-        
-        print("{} model training finished!".format(key))
-        final_preds_target, ground_truth_target = model_da.prediction()
-        final_p.append(final_preds_target)
-        final_g.append(ground_truth_target)
-    
-    return final_p, final_g
-    
+        model_da = model.OmicsTweezer(
+            architectures=architectures[key],
+            epochs=epochs,
+            batch_size=batch_size,
+            target_type="simulated",
+            learning_rate=0.0001,
+            device=device,
+        )
 
+        train_adata = anndata.AnnData(
+            X=np.asarray(train_x, dtype=np.float32),
+            obs=train_y_df.copy(),
+        )
+
+        test_adata = anndata.AnnData(
+            X=np.asarray(test_x, dtype=np.float32),
+            obs=test_y.copy(),
+        )
+
+        train_adata.uns["cell_types"] = cell_types
+        test_adata.uns["cell_types"] = cell_types
+
+        print(train_adata)
+        print(test_adata)
+        print("OT weight:", ot_weight)
+
+        model_da.train(
+            train_adata,
+            test_adata,
+            ot_weight,
+        )
+
+        print(f"{key} model training finished!")
+
+        predictions, ground_truth = model_da.prediction()
+
+        final_predictions.append(predictions)
+        final_ground_truth.append(ground_truth)
+
+    return final_predictions, final_ground_truth
