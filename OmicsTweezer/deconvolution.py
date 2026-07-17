@@ -5,11 +5,14 @@ import random
 import torch
 
 from .utils import ProcessInputData
+from .simulation import generate_simulated_data
 from OmicsTweezer import model
 
 
-def set_seed(seed=42):
-    """Set reproducible random seeds for CPU and CUDA."""
+def set_seed(seed: int = 42) -> None:
+    """Set Python, NumPy, CPU, and CUDA random seeds."""
+    seed = int(seed)
+
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
@@ -17,13 +20,17 @@ def set_seed(seed=42):
     if torch.cuda.is_available():
         torch.cuda.manual_seed(seed)
         torch.cuda.manual_seed_all(seed)
-        torch.backends.cudnn.deterministic = True
-        torch.backends.cudnn.benchmark = False
+
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+
+    # Helps identify unsupported nondeterministic operations without crashing.
+    torch.use_deterministic_algorithms(True, warn_only=True)
 
     print(f"Seed is fixed, seed is {seed}")
 
 
-set_seed()
+
 
 
 def mian(
@@ -35,6 +42,7 @@ def mian(
     batch_size=128,
     epochs=128,
     device=None,
+    seed=42
 ):
     """
     Train OmicsTweezer and predict cell-type proportions.
@@ -55,7 +63,11 @@ def mian(
         None automatically selects CUDA when available, otherwise CPU.
         Use "cpu", "cuda", or "cuda:0" to select explicitly.
     """
+    seed = int(seed)
+    set_seed(seed)
+
     print("begin")
+    print(f"Requested OmicsTweezer seed: {seed}")
 
     if isinstance(necessary_data, str):
         postfix = necessary_data.rsplit(".", 1)[-1].lower()
@@ -65,6 +77,7 @@ def mian(
                 sc_data=necessary_data,
                 samplenum=5000,
                 sparse=sparse,
+                random_state=seed,
             )
 
         elif postfix == "h5ad":
@@ -128,6 +141,7 @@ def mian(
         batch_size=batch_size,
         epochs=epochs,
         device=device,
+        seed=seed
     )
 
     return pred, ground_truth
@@ -142,6 +156,7 @@ def test(
     batch_size=128,
     epochs=128,
     device=None,
+    seed=42
 ):
     architectures = {
         "m256": (
@@ -179,6 +194,8 @@ def test(
     final_ground_truth = []
 
     for key in ["m256", "m512", "m1024"]:
+        print(f"Training {key} with run seed {seed}")
+
         model_da = model.OmicsTweezer(
             architectures=architectures[key],
             epochs=epochs,
@@ -186,6 +203,7 @@ def test(
             target_type="simulated",
             learning_rate=0.0001,
             device=device,
+            seed=seed
         )
 
         train_adata = anndata.AnnData(

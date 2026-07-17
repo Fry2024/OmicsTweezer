@@ -11,6 +11,7 @@ import torch
 
 def set_seed(seed=42):
     """Set reproducible seeds for CPU and CUDA."""
+    seed = int(seed)
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
@@ -18,13 +19,13 @@ def set_seed(seed=42):
     if torch.cuda.is_available():
         torch.cuda.manual_seed(seed)
         torch.cuda.manual_seed_all(seed)
-        torch.backends.cudnn.deterministic = True
-        torch.backends.cudnn.benchmark = False
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
 
     print(f"Seed is fixed, seed is {seed}")
 
 
-set_seed()
+
 
 #### NEEDED FILES
 # 1. GeneLength.txt

@@ -9,7 +9,8 @@ def train_predict(
     num=3000,
     scale=True,
     ot_weight=1,
-    device=None
+    device=None,
+    seed=42
 ):
     """
     Train OmicsTweezer and predict target cell-type proportions.
@@ -26,6 +27,7 @@ def train_predict(
         train_reference,
         samplenum=num,
         sparse=False,
+        random_state=int(seed)
     )
 
     # Work on copies so the original objects are not modified.
@@ -60,6 +62,7 @@ def train_predict(
         batch_size=128,
         epochs=30,
         device=device,
+        seed=int(seed)
     )
 
     return (

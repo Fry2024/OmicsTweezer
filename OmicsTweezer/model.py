@@ -56,6 +56,8 @@ def resolve_device(device=None):
 
 
 def set_seed(seed=42):
+    seed = int(seed)
+
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
@@ -64,8 +66,12 @@ def set_seed(seed=42):
         torch.cuda.manual_seed(seed)
         torch.cuda.manual_seed_all(seed)
 
-        torch.backends.cudnn.deterministic = True
-        torch.backends.cudnn.benchmark = False
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+    torch.use_deterministic_algorithms(
+        True,
+        warn_only=True,
+    )
 
     print(f"Seed is fixed, seed is {seed}")
 
@@ -96,7 +102,15 @@ class DecoderBlock(nn.Module):
 
         
 class OmicsTweezer(object):
-    def __init__(self, architectures, epochs, batch_size, target_type, learning_rate,device=None,):
+    def __init__(
+        self, 
+        architectures, 
+        epochs, 
+        batch_size, 
+        target_type, 
+        learning_rate,
+        device=None,
+        seed=42):
         self.num_epochs = epochs
         self.batch_size = batch_size
         self.target_type = target_type
@@ -106,7 +120,7 @@ class OmicsTweezer(object):
         self.labels = None
         self.used_features = None
 
-        self.seed = 2021
+        self.seed = int(seed)
         self.outdir = "./result_data/"
 
         self.architectures_dim = architectures[0]
@@ -114,7 +128,6 @@ class OmicsTweezer(object):
 
         self.device = resolve_device(device)
 
-        set_seed(self.seed)
 
         print(f"Using device: {self.device}")
 
@@ -145,39 +158,111 @@ class OmicsTweezer(object):
 
         return model_da
 
-    def prepare_dataloader(self, source_data, target_data, batch_size):
-        ### Prepare data loader for training ###
-        # Source dataset
-        source_ratios = [source_data.obs[ctype] for ctype in source_data.uns['cell_types']]
-        self.source_data_x = source_data.X.astype(np.float32)
-        self.source_data_y = np.array(source_ratios, dtype=np.float32).transpose()
-        
-        tr_data = torch.FloatTensor(self.source_data_x)
-        tr_labels = torch.FloatTensor(self.source_data_y)
-        source_dataset = Data.TensorDataset(tr_data, tr_labels)
-        self.train_source_loader = Data.DataLoader(dataset=source_dataset, batch_size=batch_size, shuffle=True)
+    def prepare_dataloader(
+        self,
+        source_data,
+        target_data,
+        batch_size,
+    ):
+        # ---------------------------------------------------------------
+        # Source data
+        # ---------------------------------------------------------------
+        source_ratios = [
+            source_data.obs[ctype]
+            for ctype in source_data.uns["cell_types"]
+        ]
 
-        # Extract celltype and feature info
-        self.labels = source_data.uns['cell_types']
+        self.source_data_x = np.asarray(
+            source_data.X,
+            dtype=np.float32,
+        )
+
+        self.source_data_y = np.asarray(
+            source_ratios,
+            dtype=np.float32,
+        ).T
+
+        tr_data = torch.from_numpy(self.source_data_x)
+        tr_labels = torch.from_numpy(self.source_data_y)
+
+        source_dataset = Data.TensorDataset(
+            tr_data,
+            tr_labels,
+        )
+
+        source_generator = torch.Generator()
+        source_generator.manual_seed(self.seed)
+
+        self.train_source_loader = Data.DataLoader(
+            dataset=source_dataset,
+            batch_size=batch_size,
+            shuffle=True,
+            generator=source_generator,
+        )
+
+        # ---------------------------------------------------------------
+        # Metadata
+        # ---------------------------------------------------------------
+        self.labels = source_data.uns["cell_types"]
         self.celltype_num = len(self.labels)
         self.used_features = list(source_data.var_names)
 
-        # Target dataset
-        self.target_data_x = target_data.X.astype(np.float32)
-      
-        if self.target_type == "simulated":
-            target_ratios = [target_data.obs[ctype] for ctype in self.labels]
-            self.target_data_y = np.array(target_ratios, dtype=np.float32).transpose()
-        elif self.target_type == "real":
-            self.target_data_y = np.random.rand(target_data.shape[0], self.celltype_num)
+        # ---------------------------------------------------------------
+        # Target data
+        # ---------------------------------------------------------------
+        self.target_data_x = np.asarray(
+            target_data.X,
+            dtype=np.float32,
+        )
 
-        te_data = torch.FloatTensor(self.target_data_x)
-        te_labels = torch.FloatTensor(self.target_data_y)
-        target_dataset = Data.TensorDataset(te_data, te_labels)
-        self.train_target_loader = Data.DataLoader(dataset=target_dataset, batch_size=batch_size, shuffle=True)
-        self.test_target_loader = Data.DataLoader(dataset=target_dataset, batch_size=batch_size, shuffle=False)
+        if self.target_type == "simulated":
+            target_ratios = [
+                target_data.obs[ctype]
+                for ctype in self.labels
+            ]
+
+            self.target_data_y = np.asarray(
+                target_ratios,
+                dtype=np.float32,
+            ).T
+
+        elif self.target_type == "real":
+            self.target_data_y = np.random.rand(
+                target_data.shape[0],
+                self.celltype_num,
+            ).astype(np.float32)
+
+        else:
+            raise ValueError(
+                "`target_type` must be 'simulated' or 'real'."
+            )
+
+        te_data = torch.from_numpy(self.target_data_x)
+        te_labels = torch.from_numpy(self.target_data_y)
+
+        target_dataset = Data.TensorDataset(
+            te_data,
+            te_labels,
+        )
+
+        target_generator = torch.Generator()
+        target_generator.manual_seed(self.seed + 1)
+
+        self.train_target_loader = Data.DataLoader(
+            dataset=target_dataset,
+            batch_size=batch_size,
+            shuffle=True,
+            generator=target_generator,
+        )
+
+        self.test_target_loader = Data.DataLoader(
+            dataset=target_dataset,
+            batch_size=batch_size,
+            shuffle=False,
+        )
 
     def train(self, source_data, target_data, loss_weight):
+        set_seed(self.seed)
         # Prepare data loaders.
         self.prepare_dataloader(
             source_data,
