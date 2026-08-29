@@ -10,7 +10,9 @@ def train_predict(
     scale=True,
     ot_weight=1,
     device=None,
-    seed=42
+    seed=42,
+    model_dir=None,
+    output_dir=None
 ):
     """
     Train OmicsTweezer and predict target cell-type proportions.
@@ -20,6 +22,12 @@ def train_predict(
     device : None, str, or torch.device
         None automatically uses CUDA when available, otherwise CPU.
         Use "cpu", "cuda", or "cuda:0" to select explicitly.
+    model_dir : None or str
+        When given, the three trained models are written there so inference
+        can be repeated later with deconvolution.predict.
+    output_dir : None or str
+        When given, the averaged and per-model proportion tables are written
+        there.
     """
 
     # Generate simulated training bulk samples.
@@ -54,7 +62,7 @@ def train_predict(
         :test_bulk_copy.n_obs
     ].copy()
 
-    predict_output, ground_truth = deconvolution.mian(
+    result = deconvolution.mian(
         necessary_data=train_bulk,
         real_bulk=test_bulk_copy,
         ot_weight=ot_weight,
@@ -62,11 +70,9 @@ def train_predict(
         batch_size=128,
         epochs=30,
         device=device,
-        seed=int(seed)
+        seed=int(seed),
+        model_dir=model_dir,
+        output_dir=output_dir
     )
 
-    return (
-        predict_output[0]
-        + predict_output[1]
-        + predict_output[2]
-    ) / 3
+    return result["average"]
