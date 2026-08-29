@@ -10,15 +10,19 @@ import torch
 
 # 固定随机种子
 def set_seed(seed=42):
+    seed = int(seed)
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
-    torch.cuda.manual_seed(seed)
-    torch.cuda.manual_seed_all(seed)
+
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed(seed)
+        torch.cuda.manual_seed_all(seed)
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
-    print("seed is fixed, seed is {}".format(seed))
-set_seed()
+
+    print(f"Seed is fixed, seed is {seed}")
+
 
 def generate_simulated_data(sc_data, outname=None,
                             d_prior=None,
@@ -28,6 +32,15 @@ def generate_simulated_data(sc_data, outname=None,
     # sc_data should be a cell*gene matrix, no null value, txt file, sep='\t'
     # index should be cell names
     # columns should be gene labels
+    if random_state is not None:
+        random_state = int(random_state)
+        random.seed(random_state)
+        np.random.seed(random_state)
+
+        print(
+            "You specified a random state, "
+            f"random_state={random_state}"
+        )
     print('Reading single-cell dataset, this may take 1 min')
 
     print('You are using H5AD format data, please make sure "CellType" occurs in the adata.obs')
@@ -63,13 +76,10 @@ def generate_simulated_data(sc_data, outname=None,
     sc_data = np.ascontiguousarray(sc_data, dtype=np.float32)
     # make random cell proportions
 
-    if random_state is not None and isinstance(random_state, int):
-        print('You specified a random state, which will improve the reproducibility.')
 
     if d_prior is None:
         print('Generating cell fractions using Dirichlet distribution without prior info (actually random)')
-        if isinstance(random_state, int):
-            np.random.seed(random_state)
+
             
         prop = np.random.dirichlet(np.ones(num_celltype), samplenum)
         
@@ -78,8 +88,7 @@ def generate_simulated_data(sc_data, outname=None,
         print('Using prior info to generate cell fractions in Dirichlet distribution')
         assert len(d_prior) == num_celltype, 'dirichlet prior is a vector, its length should equals ' \
                                              'to the number of cell types'
-        if isinstance(random_state, int):
-            np.random.seed(random_state)
+
         prop = np.random.dirichlet(d_prior, samplenum)
         print('Dirichlet cell fractions is generated')
 
@@ -102,8 +111,8 @@ def generate_simulated_data(sc_data, outname=None,
         print(
             'You will set some cell type fractions are very small (<3%), '
             'these celltype is randomly chosen by percentage you set before.')
-        ## choose celltype
-        np.random.seed(0)
+
+
         indices = np.random.choice(np.arange(prop.shape[1]), replace=False, size=int(prop.shape[1] * rare_percentage))
         prop = prop / np.sum(prop, axis=1).reshape(-1, 1)
 
@@ -147,6 +156,10 @@ def generate_simulated_data_spatial(sc_data, outname=None,
                             min_cell =8, max_cell=12, samplenum=30000,
                             random_state=None, sparse=True, max_cellTyep=0.5,
                             rare=False, rare_percentage=0.4,miss_value = 0):
+    if random_state is not None:
+        random_state = int(random_state)
+        random.seed(random_state)
+        np.random.seed(random_state)
     # sc_data should be a cell*gene matrix, no null value, txt file, sep='\t'
     # index should be cell names
     # columns should be gene labels
@@ -190,8 +203,7 @@ def generate_simulated_data_spatial(sc_data, outname=None,
 
     if d_prior is None:
         print('Generating cell fractions using Dirichlet distribution without prior info (actually random)')
-        if isinstance(random_state, int):
-            np.random.seed(random_state)
+
             
         prop = np.random.dirichlet(np.ones(num_celltype), samplenum)
         
@@ -200,8 +212,7 @@ def generate_simulated_data_spatial(sc_data, outname=None,
         print('Using prior info to generate cell fractions in Dirichlet distribution')
         assert len(d_prior) == num_celltype, 'dirichlet prior is a vector, its length should equals ' \
                                              'to the number of cell types'
-        if isinstance(random_state, int):
-            np.random.seed(random_state)
+
         prop = np.random.dirichlet(d_prior, samplenum)
         print('Dirichlet cell fractions is generated')
 
@@ -230,7 +241,7 @@ def generate_simulated_data_spatial(sc_data, outname=None,
             'You will set some cell type fractions are very small (<3%), '
             'these celltype is randomly chosen by percentage you set before.')
         ## choose celltype
-        np.random.seed(0)
+
         indices = np.random.choice(np.arange(prop.shape[1]), replace=False, size=int(prop.shape[1] * rare_percentage))
         prop = prop / np.sum(prop, axis=1).reshape(-1, 1)
 
